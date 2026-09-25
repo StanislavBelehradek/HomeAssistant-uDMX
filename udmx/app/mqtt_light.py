@@ -37,6 +37,9 @@ class DmxLight:
         self.unique_id = f"usb_dmx_{self.object_id}"
         self.command_topic = f"usb_dmx/{self.object_id}/set"
         self.state_topic = f"usb_dmx/{self.object_id}/state"
+        # controls the HA entity_id (e.g. light.udmx_bodovkychodba) instead of
+        # HA's default of combining the device name with the entity name
+        self.entity_object_id = f"udmx_{_slugify(name)}"
         self.is_on = False
         self.brightness = 255
 
@@ -52,6 +55,7 @@ class DmxLight:
         payload: dict[str, Any] = {
             "name": self.name,
             "unique_id": self.unique_id,
+            "object_id": self.entity_object_id,
             "schema": "json",
             "command_topic": self.command_topic,
             "state_topic": self.state_topic,

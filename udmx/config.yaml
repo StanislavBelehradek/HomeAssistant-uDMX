@@ -1,5 +1,5 @@
 name: "USB DMX512 (Lixada/uDMX)"
-version: "0.1.0"
+version: "0.1.1"
 slug: "udmx"
 description: "Control DMX512 lighting fixtures through a uDMX-compatible USB adapter (e.g. Lixada USB DMX512) via MQTT discovery."
 url: "https://github.com/StanislavBelehradek/HomeAssistant-uDMX"
