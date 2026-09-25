@@ -1,14 +1,11 @@
 name: "USB DMX512 (Lixada/uDMX)"
 version: "0.1.0"
-slug: "usb_dmx"
+slug: "udmx"
 description: "Control DMX512 lighting fixtures through a uDMX-compatible USB adapter (e.g. Lixada USB DMX512) via MQTT discovery."
-url: "https://github.com/StanislavBelehradek/HomeAssistantApp-UsbDMX"
+url: "https://github.com/StanislavBelehradek/HomeAssistant-uDMX"
 arch:
   - aarch64
   - amd64
-  - armhf
-  - armv7
-  - i386
 init: false
 startup: services
 boot: auto
