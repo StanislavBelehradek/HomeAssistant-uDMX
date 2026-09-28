@@ -51,6 +51,11 @@ class UsbDmxController:
         # refresh_rate == 0 disables the periodic background resend.
         self._refresh_interval = 1.0 / refresh_rate if refresh_rate > 0 else None
         self._device: usb.core.Device | None = None
+        self._connected = False
+        # Throttles reconnect attempts so a disconnected adapter doesn't
+        # trigger a usb.core.find() call on every refresh tick.
+        self._reconnect_backoff = 2.0
+        self._next_reconnect_attempt = 0.0
         self._buffer = bytearray(DMX_UNIVERSE_SIZE)
         self._lock = threading.Lock()
         self._stop_event = threading.Event()
@@ -64,17 +69,7 @@ class UsbDmxController:
                 f"No USB device found for VID={self._vendor_id:04X} "
                 f"PID={self._product_id:04X}"
             )
-        try:
-            if device.is_kernel_driver_active(0):
-                device.detach_kernel_driver(0)
-        except (NotImplementedError, usb.core.USBError):
-            pass
-        try:
-            device.set_configuration()
-        except usb.core.USBError as err:
-            raise UsbDmxError(f"Failed to configure USB DMX adapter: {err}") from err
-
-        self._device = device
+        self._configure_device(device)
         self._stop_event.clear()
         if self._refresh_interval is not None:
             self._thread = threading.Thread(
@@ -91,6 +86,7 @@ class UsbDmxController:
         if self._device is not None:
             usb.util.dispose_resources(self._device)
             self._device = None
+        self._connected = False
 
     def set_channel(self, channel: int, value: int) -> None:
         """Set a single 1-based DMX channel value (0-255)."""
@@ -115,6 +111,8 @@ class UsbDmxController:
             self._stop_event.wait(max(0.0, self._refresh_interval - elapsed))
 
     def _send_data(self, start_channel_0based: int, data: bytes) -> None:
+        if not self._connected and not self._try_reconnect():
+            return
         assert self._device is not None
         if self._chunk_size <= 0:
             segments = [(start_channel_0based, data)]
@@ -133,5 +131,52 @@ class UsbDmxController:
                     data_or_wLength=chunk,
                 )
             except usb.core.USBError as err:
-                _LOGGER.warning("USB DMX write failed at channel %s: %s", index + 1, err)
+                self._handle_disconnect(index, err)
                 return
+
+    def _configure_device(self, device: usb.core.Device) -> None:
+        try:
+            if device.is_kernel_driver_active(0):
+                device.detach_kernel_driver(0)
+        except (NotImplementedError, usb.core.USBError):
+            pass
+        try:
+            device.set_configuration()
+        except usb.core.USBError as err:
+            raise UsbDmxError(f"Failed to configure USB DMX adapter: {err}") from err
+        self._device = device
+        self._connected = True
+
+    def _try_reconnect(self) -> bool:
+        """Attempt to re-find and re-open the adapter after a disconnect.
+
+        Throttled so a missing device doesn't trigger a usb.core.find() call
+        on every refresh tick.
+        """
+        now = time.monotonic()
+        if now < self._next_reconnect_attempt:
+            return False
+        self._next_reconnect_attempt = now + self._reconnect_backoff
+        device = usb.core.find(idVendor=self._vendor_id, idProduct=self._product_id)
+        if device is None:
+            return False
+        try:
+            self._configure_device(device)
+        except UsbDmxError as err:
+            _LOGGER.debug("USB DMX reconnect attempt failed: %s", err)
+            return False
+        _LOGGER.info("USB DMX adapter reconnected")
+        return True
+
+    def _handle_disconnect(self, channel_index: int, err: Exception) -> None:
+        if self._connected:
+            _LOGGER.warning(
+                "USB DMX write failed at channel %s: %s (will retry once the "
+                "device reappears)",
+                channel_index + 1,
+                err,
+            )
+        self._connected = False
+        if self._device is not None:
+            usb.util.dispose_resources(self._device)
+            self._device = None
