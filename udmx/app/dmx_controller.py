@@ -38,6 +38,8 @@ class UsbDmxError(Exception):
 class UsbDmxController:
     """Owns the USB device and the DMX universe buffer."""
 
+    _MAX_WRITE_ATTEMPTS = 3
+
     def __init__(
         self,
         vendor_id: int,
@@ -122,8 +124,15 @@ class UsbDmxController:
                 for offset in range(0, len(data), self._chunk_size)
             ]
         for index, chunk in segments:
+            if not self._write_chunk(index, chunk):
+                return
+
+    def _write_chunk(self, index: int, chunk: bytes) -> bool:
+        """Write one chunk, retrying up to _MAX_WRITE_ATTEMPTS times on a short write."""
+        assert self._device is not None
+        for attempt in range(1, self._MAX_WRITE_ATTEMPTS + 1):
             try:
-                self._device.ctrl_transfer(
+                written = self._device.ctrl_transfer(
                     _CTRL_OUT,
                     CMD_SET_CHANNEL_RANGE,
                     wValue=len(chunk),
@@ -132,7 +141,23 @@ class UsbDmxController:
                 )
             except usb.core.USBError as err:
                 self._handle_disconnect(index, err)
-                return
+                return False
+            if written == len(chunk):
+                return True
+            _LOGGER.warning(
+                "USB DMX write at channel %s incomplete (%s/%s bytes), attempt %s/%s",
+                index + 1,
+                written,
+                len(chunk),
+                attempt,
+                self._MAX_WRITE_ATTEMPTS,
+            )
+        _LOGGER.error(
+            "USB DMX write at channel %s failed after %s attempts",
+            index + 1,
+            self._MAX_WRITE_ATTEMPTS,
+        )
+        return False
 
     def _configure_device(self, device: usb.core.Device) -> None:
         try:
